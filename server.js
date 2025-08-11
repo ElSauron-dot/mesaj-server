@@ -12,9 +12,9 @@ wss.on('connection', function connection(ws) {
   ws.on('message', function incoming(message) {
     console.log('Gelen mesaj:', message);
 
-    // Gelen mesajı diğer tüm bağlı kullanıcılara gönder
+    // Mesajı tüm bağlı kullanıcılara (gönderene dahil) gönder
     wss.clients.forEach(function each(client) {
-      if (client !== ws && client.readyState === WebSocket.OPEN) {
+      if (client.readyState === WebSocket.OPEN) {
         client.send(message);
       }
     });
