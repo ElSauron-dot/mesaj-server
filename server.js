@@ -1,43 +1,52 @@
 // server.js
-const WebSocket = require('ws');
-const port = process.env.PORT || 8080;
-const wss = new WebSocket.Server({ port });
+const express = require("express");
+const WebSocket = require("ws");
+const http = require("http");
 
-console.log(`WebSocket server listening on port ${port}`);
+const app = express();
+const server = http.createServer(app);
+const wss = new WebSocket.Server({ server });
 
-// Mesaj geçmişi (en fazla 1500 mesaj)
 let messageHistory = [];
 
-wss.on('connection', (ws) => {
-  console.log('Yeni kullanıcı bağlandı.');
+wss.on("connection", (ws) => {
+  // Bağlanınca önce geçmişi gönder
+  ws.send(JSON.stringify({ type: "history", messages: messageHistory }));
 
-  // Bağlanınca geçmiş mesajları gönder
-  messageHistory.forEach(msg => {
-    ws.send(JSON.stringify(msg));
-  });
-
-  ws.on('message', (message) => {
+  ws.on("message", (message) => {
     try {
       const data = JSON.parse(message);
-      console.log(`Mesaj: ${data.name}: ${data.text}`);
 
-      // Mesajı geçmişe ekle
-      messageHistory.push({ name: data.name, text: data.text });
-      if (messageHistory.length > 1500) {
-        messageHistory.shift(); // En eski mesajı sil
+      // Normal mesaj
+      if (data.type === "chat") {
+        messageHistory.push({ name: data.name, text: data.text });
+        if (messageHistory.length > 1500) messageHistory.shift();
+
+        broadcast(data);
       }
-
-      // Herkese gönder
-      const jsonMessage = JSON.stringify({ name: data.name, text: data.text });
-      wss.clients.forEach((client) => {
-        if (client.readyState === WebSocket.OPEN) {
-          client.send(jsonMessage);
-        }
-      });
-    } catch (err) {
-      console.error('Mesaj parse hatası:', err);
+      // Mesaj temizleme
+      else if (data.type === "clear") {
+        messageHistory = [];
+        broadcast({ type: "clear" });
+      }
+      // WebRTC sinyalleri (arama)
+      else if (data.type === "signal") {
+        broadcast(data, ws); // Gönderen hariç diğerlerine
+      }
+    } catch (e) {
+      console.error("Mesaj parse edilemedi", e);
     }
   });
-
-  ws.on('close', () => console.log('Kullanıcı ayrıldı.'));
 });
+
+function broadcast(data, exclude) {
+  const json = JSON.stringify(data);
+  wss.clients.forEach((client) => {
+    if (client.readyState === WebSocket.OPEN && client !== exclude) {
+      client.send(json);
+    }
+  });
+}
+
+const PORT = process.env.PORT || 3000;
+server.listen(PORT, () => console.log(`Server listening on ${PORT}`));
