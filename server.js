@@ -6,18 +6,27 @@ const wss = new WebSocket.Server({ port });
 
 console.log(`WebSocket server listening on port ${port}`);
 
-wss.on('connection', function connection(ws) {
+wss.on('connection', (ws) => {
   console.log('Yeni kullanıcı bağlandı.');
 
-  ws.on('message', function incoming(message) {
-    console.log('Gelen mesaj:', message);
+  ws.on('message', (message) => {
+    try {
+      // Gelen JSON veriyi çöz
+      const data = JSON.parse(message);
 
-    // Mesajı tüm bağlı kullanıcılara (gönderene dahil) gönder
-    wss.clients.forEach(function each(client) {
-      if (client.readyState === WebSocket.OPEN) {
-        client.send(message);
-      }
-    });
+      console.log(`Mesaj geldi: ${data.name}: ${data.text}`);
+
+      // Herkese (gönderene dahil) JSON olarak geri gönder
+      const jsonMessage = JSON.stringify({ name: data.name, text: data.text });
+      wss.clients.forEach((client) => {
+        if (client.readyState === WebSocket.OPEN) {
+          client.send(jsonMessage);
+        }
+      });
+
+    } catch (err) {
+      console.error('Mesaj parse hatası:', err);
+    }
   });
 
   ws.on('close', () => {
