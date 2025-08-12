@@ -10,22 +10,24 @@ const server = http.createServer(app);
 const wss = new WebSocket.Server({ server });
 
 let messages = [];
-let voiceChannels = {}; // { kanalAdi: [kullanıcıAdı] }
-let clients = new Map(); // ws -> { name, voiceChannel }
+let voiceChannels = {}; // { channelName: [username, ...] }
+let clients = new Map(); // ws -> username
 
 wss.on("connection", (ws) => {
+    console.log("Yeni bağlantı");
+
     ws.on("message", (msg) => {
         let data;
         try {
             data = JSON.parse(msg);
-        } catch (err) {
+        } catch {
             return;
         }
 
         if (data.type === "join") {
-            clients.set(ws, { name: data.name, voiceChannel: null });
+            clients.set(ws, data.name);
             ws.send(JSON.stringify({ type: "history", messages }));
-            sendVoiceChannels();
+            updateVoiceChannels();
         }
 
         if (data.type === "message") {
@@ -36,18 +38,17 @@ wss.on("connection", (ws) => {
         }
 
         if (data.type === "joinVoice") {
-            const client = clients.get(ws);
+            // Kanala ekle
             if (!voiceChannels[data.channel]) voiceChannels[data.channel] = [];
-            if (!voiceChannels[data.channel].includes(client.name)) {
-                voiceChannels[data.channel].push(client.name);
+            if (!voiceChannels[data.channel].includes(data.name)) {
+                voiceChannels[data.channel].push(data.name);
             }
-            client.voiceChannel = data.channel;
-            sendVoiceChannels();
+            updateVoiceChannels();
         }
 
-        // WebRTC sinyalleşme
         if (["offer", "answer", "candidate"].includes(data.type)) {
-            wss.clients.forEach(client => {
+            // WebRTC sinyalleme
+            wss.clients.forEach((client) => {
                 if (client !== ws && client.readyState === WebSocket.OPEN) {
                     client.send(JSON.stringify(data));
                 }
@@ -56,36 +57,29 @@ wss.on("connection", (ws) => {
     });
 
     ws.on("close", () => {
-        const client = clients.get(ws);
-        if (client && client.voiceChannel) {
-            const arr = voiceChannels[client.voiceChannel];
-            if (arr) {
-                voiceChannels[client.voiceChannel] = arr.filter(n => n !== client.name);
-                if (voiceChannels[client.voiceChannel].length === 0) {
-                    delete voiceChannels[client.voiceChannel];
-                }
-            }
-        }
+        const username = clients.get(ws);
         clients.delete(ws);
-        sendVoiceChannels();
+        for (let ch in voiceChannels) {
+            voiceChannels[ch] = voiceChannels[ch].filter((u) => u !== username);
+        }
+        updateVoiceChannels();
     });
 });
 
-function broadcast(obj, type) {
-    wss.clients.forEach(client => {
+function broadcast(data, type) {
+    wss.clients.forEach((client) => {
         if (client.readyState === WebSocket.OPEN) {
-            client.send(JSON.stringify({ ...obj, type }));
+            client.send(JSON.stringify({ type, ...data }));
         }
     });
 }
 
-function sendVoiceChannels() {
-    const payload = { type: "voiceChannels", channels: voiceChannels };
-    wss.clients.forEach(client => {
+function updateVoiceChannels() {
+    wss.clients.forEach((client) => {
         if (client.readyState === WebSocket.OPEN) {
-            client.send(JSON.stringify(payload));
+            client.send(JSON.stringify({ type: "voiceChannels", channels: voiceChannels }));
         }
     });
 }
 
-server.listen(3000, () => console.log("Server çalışıyor 3000"));
+server.listen(3000, () => console.log("Server 3000 portunda çalışıyor"));
