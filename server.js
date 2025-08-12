@@ -46,6 +46,16 @@ wss.on("connection", (ws) => {
             updateVoiceChannels();
         }
 
+        if (data.type === "leaveVoice") {
+            if (voiceChannels[data.channel]) {
+                voiceChannels[data.channel] = voiceChannels[data.channel].filter(u => u !== data.name);
+                if (voiceChannels[data.channel].length === 0) {
+                    delete voiceChannels[data.channel];
+                }
+            }
+            updateVoiceChannels();
+        }
+
         if (["offer", "answer", "candidate"].includes(data.type)) {
             // WebRTC sinyalleme
             wss.clients.forEach((client) => {
@@ -61,6 +71,7 @@ wss.on("connection", (ws) => {
         clients.delete(ws);
         for (let ch in voiceChannels) {
             voiceChannels[ch] = voiceChannels[ch].filter((u) => u !== username);
+            if (voiceChannels[ch].length === 0) delete voiceChannels[ch];
         }
         updateVoiceChannels();
     });
