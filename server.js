@@ -1,74 +1,45 @@
-// server.js
 const WebSocket = require('ws');
 const port = process.env.PORT || 8080;
 const wss = new WebSocket.Server({ port });
 
 console.log(`WebSocket server running on port ${port}`);
 
-// Mesaj geçmişi (max 1500)
 let messageHistory = [];
-
-// Kullanıcı listesi
-let users = {};
+let voiceChannels = ["Genel Sesli Kanal"];
 
 wss.on('connection', (ws) => {
-    let userName = null;
-
-    // Bağlanınca geçmiş mesajları gönder
+    // Bağlanınca mevcut verileri gönder
     ws.send(JSON.stringify({ type: 'history', messages: messageHistory }));
+    ws.send(JSON.stringify({ type: 'voiceChannels', channels: voiceChannels }));
 
-    ws.on('message', (message) => {
+    ws.on('message', (msg) => {
         try {
-            const data = JSON.parse(message);
-
-            if (data.type === 'join') {
-                userName = data.name;
-                users[userName] = ws;
-                console.log(`${userName} bağlandı.`);
-                return;
-            }
+            const data = JSON.parse(msg);
 
             if (data.type === 'message') {
-                const msgObj = { name: data.name, text: data.text, time: Date.now() };
-                messageHistory.push(msgObj);
+                const newMsg = { name: data.name, text: data.text, time: Date.now() };
+                messageHistory.push(newMsg);
                 if (messageHistory.length > 1500) messageHistory.shift();
-
-                // Herkese gönder
-                wss.clients.forEach(client => {
-                    if (client.readyState === WebSocket.OPEN) {
-                        client.send(JSON.stringify({ type: 'message', ...msgObj }));
-                    }
-                });
+                broadcast({ type: 'message', ...newMsg });
             }
 
-            // Sesli arama sinyali
-            if (data.type === 'signal' && data.target && users[data.target]) {
-                users[data.target].send(JSON.stringify({
-                    type: 'signal',
-                    from: data.from,
-                    signal: data.signal
-                }));
+            if (data.type === 'addVoiceChannel') {
+                if (!voiceChannels.includes(data.channel)) {
+                    voiceChannels.push(data.channel);
+                    broadcast({ type: 'voiceChannels', channels: voiceChannels });
+                }
             }
-
-            // Mesaj geçmişini temizleme
-            if (data.type === 'clear') {
-                messageHistory = [];
-                wss.clients.forEach(client => {
-                    if (client.readyState === WebSocket.OPEN) {
-                        client.send(JSON.stringify({ type: 'cleared' }));
-                    }
-                });
-            }
-
-        } catch (err) {
-            console.error("Mesaj parse hatası:", err);
-        }
-    });
-
-    ws.on('close', () => {
-        if (userName) {
-            delete users[userName];
-            console.log(`${userName} ayrıldı.`);
+        } catch (e) {
+            console.error("JSON parse error:", e);
         }
     });
 });
+
+function broadcast(obj) {
+    const str = JSON.stringify(obj);
+    wss.clients.forEach(client => {
+        if (client.readyState === WebSocket.OPEN) {
+            client.send(str);
+        }
+    });
+}
