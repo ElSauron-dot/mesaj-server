@@ -1,114 +1,74 @@
 // server.js
-const express = require("express");
-const http = require("http");
-const WebSocket = require("ws");
+const WebSocket = require('ws');
+const port = process.env.PORT || 8080;
+const wss = new WebSocket.Server({ port });
 
-const app = express();
-const server = http.createServer(app);
-const wss = new WebSocket.Server({ server });
+console.log(`WebSocket server running on port ${port}`);
 
-const MAX_HISTORY = 1500;
-let messageHistory = []; // { name, text, time }
-const clients = new Map(); // name -> ws
+// Mesaj geçmişi (max 1500)
+let messageHistory = [];
 
-function broadcastJSON(obj, exceptWs = null) {
-  const json = JSON.stringify(obj);
-  for (const ws of wss.clients) {
-    if (ws.readyState === WebSocket.OPEN && ws !== exceptWs) {
-      ws.send(json);
-    }
-  }
-}
+// Kullanıcı listesi
+let users = {};
 
-function sendMembersUpdate() {
-  const members = Array.from(clients.keys());
-  broadcastJSON({ type: "members", members });
-}
+wss.on('connection', (ws) => {
+    let userName = null;
 
-wss.on("connection", (ws) => {
-  console.log("Yeni WS bağlantısı");
+    // Bağlanınca geçmiş mesajları gönder
+    ws.send(JSON.stringify({ type: 'history', messages: messageHistory }));
 
-  ws.on("message", (raw) => {
-    let data;
-    try { data = JSON.parse(raw); } catch (e) { console.error("JSON parse hatası", e); return; }
+    ws.on('message', (message) => {
+        try {
+            const data = JSON.parse(message);
 
-    // Kayıt (register)
-    if (data.type === "register") {
-      const name = String(data.name || "").trim();
-      if (!name) {
-        ws.send(JSON.stringify({ type: "register", ok: false, reason: "İsim boş" }));
-        ws.close();
-        return;
-      }
-      if (clients.has(name)) {
-        ws.send(JSON.stringify({ type: "register", ok: false, reason: "İsim kullanımda" }));
-        ws.close();
-        return;
-      }
-      ws._name = name;
-      clients.set(name, ws);
-      // Gönder: başarı + geçmiş + üye listesi
-      ws.send(JSON.stringify({ type: "register", ok: true }));
-      ws.send(JSON.stringify({ type: "history", messages: messageHistory }));
-      sendMembersUpdate();
-      console.log(`${name} kayıt oldu.`);
-      return;
-    }
+            if (data.type === 'join') {
+                userName = data.name;
+                users[userName] = ws;
+                console.log(`${userName} bağlandı.`);
+                return;
+            }
 
-    // Sohbet mesajı
-    if (data.type === "chat") {
-      const name = ws._name || data.name || "Anon";
-      const text = String(data.text || "");
-      const time = data.time || Date.now();
-      const msg = { type: "chat", name, text, time };
-      messageHistory.push({ name, text, time });
-      if (messageHistory.length > MAX_HISTORY) messageHistory.shift();
-      broadcastJSON(msg);
-      return;
-    }
+            if (data.type === 'message') {
+                const msgObj = { name: data.name, text: data.text, time: Date.now() };
+                messageHistory.push(msgObj);
+                if (messageHistory.length > 1500) messageHistory.shift();
 
-    // Temizle
-    if (data.type === "clear") {
-      messageHistory = [];
-      broadcastJSON({ type: "clear" });
-      return;
-    }
+                // Herkese gönder
+                wss.clients.forEach(client => {
+                    if (client.readyState === WebSocket.OPEN) {
+                        client.send(JSON.stringify({ type: 'message', ...msgObj }));
+                    }
+                });
+            }
 
-    // WebRTC sinyalleme: forward target'a (gönderen hariç)
-    if (data.type === "signal") {
-      const target = data.target;
-      if (!target) {
-        ws.send(JSON.stringify({ type: "signal", signalType: "error", message: "target eksik" }));
-        return;
-      }
-      const targetWs = clients.get(target);
-      if (!targetWs || targetWs.readyState !== WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: "signal", signalType: "error", message: "Hedef çevrimdışı", target }));
-        return;
-      }
-      // Forward: include 'from' (gönderen ismi)
-      const forward = Object.assign({}, data, { from: ws._name || null });
-      // send only to target
-      targetWs.send(JSON.stringify(forward));
-      return;
-    }
+            // Sesli arama sinyali
+            if (data.type === 'signal' && data.target && users[data.target]) {
+                users[data.target].send(JSON.stringify({
+                    type: 'signal',
+                    from: data.from,
+                    signal: data.signal
+                }));
+            }
 
-    // Diğer tipler
-    console.warn("Bilinmeyen type:", data.type);
-  });
+            // Mesaj geçmişini temizleme
+            if (data.type === 'clear') {
+                messageHistory = [];
+                wss.clients.forEach(client => {
+                    if (client.readyState === WebSocket.OPEN) {
+                        client.send(JSON.stringify({ type: 'cleared' }));
+                    }
+                });
+            }
 
-  ws.on("close", () => {
-    if (ws._name && clients.has(ws._name)) {
-      clients.delete(ws._name);
-      console.log(`${ws._name} bağlantısı kesildi`);
-      sendMembersUpdate();
-    }
-  });
+        } catch (err) {
+            console.error("Mesaj parse hatası:", err);
+        }
+    });
 
-  ws.on("error", (e) => {
-    console.error("WS error:", e);
-  });
+    ws.on('close', () => {
+        if (userName) {
+            delete users[userName];
+            console.log(`${userName} ayrıldı.`);
+        }
+    });
 });
-
-const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => console.log("Server listening on", PORT));
