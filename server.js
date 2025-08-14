@@ -1,96 +1,30 @@
-const express = require("express");
-const http = require("http");
-const WebSocket = require("ws");
-const cors = require("cors");
-
+// server.js
+const express = require('express');
 const app = express();
-app.use(cors());
+const http = require('http').createServer(app);
+const io = require('socket.io')(http);
 
-const server = http.createServer(app);
-const wss = new WebSocket.Server({ server });
+app.use(express.static(__dirname)); // index.html ve diğer dosyalar için
 
-let messages = [];
-let voiceChannels = {}; // { channelName: [username, ...] }
-let clients = new Map(); // ws -> username
+io.on('connection', socket => {
+    console.log('Yeni bir kullanıcı bağlandı: ' + socket.id);
 
-wss.on("connection", (ws) => {
-    console.log("Yeni bağlantı");
+    socket.on('join-room', roomID => {
+        socket.join(roomID);
+        socket.to(roomID).emit('user-connected', socket.id);
 
-    ws.on("message", (msg) => {
-        let data;
-        try {
-            data = JSON.parse(msg);
-        } catch {
-            return;
-        }
-
-        if (data.type === "join") {
-            clients.set(ws, data.name);
-            ws.send(JSON.stringify({ type: "history", messages }));
-            updateVoiceChannels();
-        }
-
-        if (data.type === "message") {
-            const m = { name: data.name, text: data.text, time: Date.now() };
-            messages.push(m);
-            if (messages.length > 1500) messages.shift();
-            broadcast(m, "message");
-        }
-
-        if (data.type === "joinVoice") {
-            // Kanala ekle
-            if (!voiceChannels[data.channel]) voiceChannels[data.channel] = [];
-            if (!voiceChannels[data.channel].includes(data.name)) {
-                voiceChannels[data.channel].push(data.name);
-            }
-            updateVoiceChannels();
-        }
-
-        if (data.type === "leaveVoice") {
-            if (voiceChannels[data.channel]) {
-                voiceChannels[data.channel] = voiceChannels[data.channel].filter(u => u !== data.name);
-                if (voiceChannels[data.channel].length === 0) {
-                    delete voiceChannels[data.channel];
-                }
-            }
-            updateVoiceChannels();
-        }
-
-        if (["offer", "answer", "candidate"].includes(data.type)) {
-            // WebRTC sinyalleme
-            wss.clients.forEach((client) => {
-                if (client !== ws && client.readyState === WebSocket.OPEN) {
-                    client.send(JSON.stringify(data));
-                }
+        socket.on('signal', (data) => {
+            io.to(data.to).emit('signal', {
+                from: socket.id,
+                signal: data.signal
             });
-        }
-    });
+        });
 
-    ws.on("close", () => {
-        const username = clients.get(ws);
-        clients.delete(ws);
-        for (let ch in voiceChannels) {
-            voiceChannels[ch] = voiceChannels[ch].filter((u) => u !== username);
-            if (voiceChannels[ch].length === 0) delete voiceChannels[ch];
-        }
-        updateVoiceChannels();
+        socket.on('disconnect', () => {
+            socket.to(roomID).emit('user-disconnected', socket.id);
+        });
     });
 });
 
-function broadcast(data, type) {
-    wss.clients.forEach((client) => {
-        if (client.readyState === WebSocket.OPEN) {
-            client.send(JSON.stringify({ type, ...data }));
-        }
-    });
-}
-
-function updateVoiceChannels() {
-    wss.clients.forEach((client) => {
-        if (client.readyState === WebSocket.OPEN) {
-            client.send(JSON.stringify({ type: "voiceChannels", channels: voiceChannels }));
-        }
-    });
-}
-
-server.listen(3000, () => console.log("Server 3000 portunda çalışıyor"));
+const PORT = process.env.PORT || 3000;
+http.listen(PORT, () => console.log(`Sunucu ${PORT} portunda çalışıyor`));
