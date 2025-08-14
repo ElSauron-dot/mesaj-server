@@ -1,55 +1,48 @@
-// server.js
-const express = require('express');
-const app = express();
-const http = require('http').createServer(app);
-const io = require('socket.io')(http, { cors: { origin: '*' } });
+const WebSocket = require('ws');
+const { v4: uuidv4 } = require('uuid');
 
-app.use(express.static(__dirname));
+const wss = new WebSocket.Server({ port: 8080 });
+let users = {}; // id -> ws
 
-const rooms = {}; // Oda listesi ve kullanıcılar
+function broadcastUserList() {
+    const userList = Object.keys(users);
+    const msg = JSON.stringify({ type: 'user-list', users: userList });
+    Object.values(users).forEach(ws => {
+        ws.send(msg);
+    });
+}
 
-io.on('connection', socket => {
-    console.log('Yeni kullanıcı bağlandı: ' + socket.id);
+wss.on('connection', (ws) => {
+    const userId = uuidv4();
+    users[userId] = ws;
 
-    // Oda oluştur
-    socket.on('create-room', (callback) => {
-        const roomID = 'ROOM-' + Math.random().toString(36).substring(2,8).toUpperCase();
-        rooms[roomID] = [];
-        callback({ roomID });
+    // ID gönder
+    ws.send(JSON.stringify({ type: 'id', id: userId }));
+
+    // Kullanıcı listesi güncelle
+    broadcastUserList();
+
+    ws.on('message', (msg) => {
+        let data;
+        try { data = JSON.parse(msg); } catch(e){ return; }
+
+        if(data.type === 'join') {
+            // kullanıcı zaten eklendi, listeler güncellendi
+        } else if(data.type === 'offer' || data.type === 'answer' || data.type === 'ice-candidate') {
+            const to = data.to;
+            if(users[to]) {
+                users[to].send(JSON.stringify({
+                    ...data,
+                    from: userId
+                }));
+            }
+        }
     });
 
-    // Odaya katıl
-    socket.on('join-room', (roomID, callback) => {
-        if (!rooms[roomID]) return callback({ success: false });
-
-        socket.join(roomID);
-        rooms[roomID].push(socket.id);
-
-        // Katıldığını diğer kullanıcılara bildir
-        socket.to(roomID).emit('user-connected', socket.id);
-        io.to(socket.id).emit('joined-room', roomID);
-        callback({ success: true });
-
-        // Mesajlaşma
-        socket.on('message', ({ room, text }) => {
-            io.to(room).emit('message', { user: socket.id, text });
-        });
-
-        // WebRTC sinyalleme
-        socket.on('signal', data => {
-            io.to(data.to).emit('signal', { from: socket.id, signal: data.signal });
-        });
-
-        // Ayrılma
-        socket.on('disconnect', () => {
-            socket.to(roomID).emit('user-disconnected', socket.id);
-            if (rooms[roomID]) {
-                rooms[roomID] = rooms[roomID].filter(u => u !== socket.id);
-                if (rooms[roomID].length === 0) delete rooms[roomID];
-            }
-        });
+    ws.on('close', () => {
+        delete users[userId];
+        broadcastUserList();
     });
 });
 
-const PORT = process.env.PORT || 3000;
-http.listen(PORT, () => console.log(`MiniGameChat sunucusu ${PORT} portunda çalışıyor`));
+console.log("WebSocket server çalışıyor: ws://localhost:8080");
