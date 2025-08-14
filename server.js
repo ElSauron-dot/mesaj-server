@@ -11,17 +11,23 @@ const rooms = {}; // Oda listesi ve kullanıcılar
 io.on('connection', socket => {
     console.log('Yeni kullanıcı bağlandı: ' + socket.id);
 
+    // Oda oluştur
+    socket.on('create-room', (callback) => {
+        const roomID = 'ROOM-' + Math.random().toString(36).substring(2,8).toUpperCase();
+        rooms[roomID] = [];
+        callback({ roomID });
+    });
+
     // Odaya katıl
     socket.on('join-room', (roomID, callback) => {
-        if (!rooms[roomID]) {
-            return callback({ success: false });
-        }
+        if (!rooms[roomID]) return callback({ success: false });
 
         socket.join(roomID);
         rooms[roomID].push(socket.id);
 
         // Katıldığını diğer kullanıcılara bildir
         socket.to(roomID).emit('user-connected', socket.id);
+        io.to(socket.id).emit('joined-room', roomID);
         callback({ success: true });
 
         // Mesajlaşma
@@ -29,7 +35,7 @@ io.on('connection', socket => {
             io.to(room).emit('message', { user: socket.id, text });
         });
 
-        // Sinyal gönderme (WebRTC)
+        // WebRTC sinyalleme
         socket.on('signal', data => {
             io.to(data.to).emit('signal', { from: socket.id, signal: data.signal });
         });
@@ -42,13 +48,6 @@ io.on('connection', socket => {
                 if (rooms[roomID].length === 0) delete rooms[roomID];
             }
         });
-    });
-
-    // Oda oluştur
-    socket.on('create-room', (callback) => {
-        const roomID = 'ROOM-' + Math.random().toString(36).substring(2,8).toUpperCase();
-        rooms[roomID] = [];
-        callback({ roomID });
     });
 });
 
