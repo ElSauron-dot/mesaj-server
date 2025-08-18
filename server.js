@@ -5,33 +5,35 @@ const cors = require("cors");
 
 const app = express();
 const server = http.createServer(app);
-const io = new Server(server, { cors: { origin: "*" } });
+const io = new Server(server, {
+  cors: { origin: "*" }
+});
 
 app.use(cors());
-app.get("/", (req, res) => res.send("Server çalışıyor"));
+app.get("/", (req, res) => res.send("NeoChat🎮 Server Aktif!"));
 
+// Bağlı kullanıcılar
 let users = {};
 
 io.on("connection", (socket) => {
   console.log("Yeni bağlantı:", socket.id);
 
+  // Nick ile katıl
   socket.on("join", (nick) => {
     users[socket.id] = nick;
-    io.emit("userlist", Object.values(users));
-    console.log(nick, "katıldı");
+    console.log(`${nick} katıldı`);
+    // Tüm kullanıcılara duyur
+    io.emit("chat", { nick: "SYSTEM", msg: `${nick} aramaya katıldı.` });
   });
 
+  // Sohbet mesajı
   socket.on("chat", (data) => {
     io.emit("chat", data);
   });
 
   // WebRTC sinyalleme
   socket.on("ready", () => {
-    for (let id in users) {
-      if (id !== socket.id) {
-        socket.to(id).emit("offer", { from: socket.id, offer: null });
-      }
-    }
+    console.log(users[socket.id], "hazır");
   });
 
   socket.on("offer", (data) => {
@@ -46,10 +48,15 @@ io.on("connection", (socket) => {
     socket.to(data.to).emit("candidate", { from: socket.id, candidate: data.candidate });
   });
 
+  // Çıkış
   socket.on("disconnect", () => {
+    const nick = users[socket.id];
     delete users[socket.id];
-    io.emit("userlist", Object.values(users));
+    console.log(`${nick} ayrıldı`);
+    io.emit("chat", { nick: "SYSTEM", msg: `${nick} aramadan ayrıldı.` });
   });
 });
 
-server.listen(10000, () => console.log("Server 10000 portunda çalışıyor"));
+// Render için port
+const PORT = process.env.PORT || 10000;
+server.listen(PORT, () => console.log("NeoChat🎮 server çalışıyor:", PORT));
